@@ -5,7 +5,7 @@
  * Contains \Drupal\imagefield_crop\Plugin\Field\FieldWidget\ImageCropWidget.
  */
 //namespace Drupal\image\Plugin\Field\FieldWidget;
-namespace Drupal\imagefield_effects\Plugin\Field\FieldWidget;
+namespace Drupal\imagefield_crop\Plugin\Field\FieldWidget;
 
 use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Component\Utility\NestedArray;
@@ -30,8 +30,16 @@ class ImageCropWidget extends ImageWidget {
   /**
    * {@inheritdoc}
    */
-  public static function defaultSettings(){
-    return parent::defaultSettings();
+  public static function defaultSettings() {
+    return array(
+      'progress_indicator' => 'throbber',
+      'preview_image_style' => 'thumbnail',
+      'collapsible' => 2,
+      'resolution' => '200x150',
+      'enforce_ratio' => TRUE,
+      'enforce_minimum' => TRUE,
+      'croparea' => '500x500',
+    ) + parent::defaultSettings();
   }
 
   /**
@@ -39,6 +47,82 @@ class ImageCropWidget extends ImageWidget {
    */
   public function settingsForm(array $form, FormStateInterface $form_state) {
     $element = parent::settingsForm($form, $form_state);
+
+    $element['collapsible'] = array(
+      '#type' => 'radios',
+      '#title' => t('Collapsible behavior'),
+      '#options' => array(
+        1 => t('None.'),
+        2 => t('Collapsible, expanded by default.'),
+        3 => t('Collapsible, collapsed by default.'),
+      ),
+      '#default_value' => $this->getSetting('collapsible'),
+    );
+    // Resolution settings.
+    $resolution = explode('x', $this->getSetting('resolution')) + array('', '');
+    $element['resolution'] = array(
+      '#title' => t('The resolution to crop the image onto'),
+      '#element_validate' => array(
+        '_image_field_resolution_validate',
+        '_imagefield_crop_widget_resolution_validate'
+      ),
+      '#theme_wrappers' => array('form_element'),
+      '#description' => t('The output resolution of the cropped image, expressed as WIDTHxHEIGHT (e.g. 640x480). Set to 0 not to rescale after cropping. Note: output resolution must be defined in order to present a dynamic preview.'),
+    );
+    $element['resolution']['x'] = array(
+      '#type' => 'textfield',
+      '#default_value' => $resolution[0],
+      '#size' => 5,
+      '#maxlength' => 5,
+      '#field_suffix' => ' x ',
+      '#theme_wrappers' => array(),
+    );
+    $element['resolution']['y'] = array(
+      '#type' => 'textfield',
+      '#default_value' => $resolution[1],
+      '#size' => 5,
+      '#maxlength' => 5,
+      '#field_suffix' => ' ' . t('pixels'),
+      '#theme_wrappers' => array(),
+    );
+    $element['enforce_ratio'] = array(
+      '#type' => 'checkbox',
+      '#title' => t('Enforce crop box ratio'),
+      '#default_value' => $this->getSetting('enforce_ratio'),
+      '#description' => t('Check this to force the ratio of the output on the crop box. NOTE: If you leave this unchecked but enforce an output resolution, the final image might be distorted'),
+      '#element_validate' => array('_imagefield_crop_widget_enforce_ratio_validate'),
+    );
+    $element['enforce_minimum'] = array(
+      '#type' => 'checkbox',
+      '#title' => t('Enforce minimum crop size based on the output size'),
+      '#default_value' => $this->getSetting('enforce_minimum'),
+      '#description' => t('Check this to force a minimum cropping selection equal to the output size. NOTE: If you leave this unchecked you might get zoomed pixels if the cropping area is smaller than the output resolution.'),
+      '#element_validate' => array('_imagefield_crop_widget_enforce_minimum_validate'),
+    );
+    // Crop area settings
+    $croparea = explode('x', $this->getSetting('croparea')) + array('', '');
+    $element['croparea'] = array(
+      '#title' => t('The resolution of the cropping area'),
+      '#element_validate' => array('_imagefield_crop_widget_croparea_validate'),
+      '#theme_wrappers' => array('form_element'),
+      '#description' => t('The resolution of the area used for the cropping of the image. Image will displayed at this resolution for cropping. Use WIDTHxHEIGHT format, empty or zero values are permitted, e.g. 500x will limit crop box to 500 pixels width.'),
+    );
+    $element['croparea']['x'] = array(
+      '#type' => 'textfield',
+      '#default_value' => $croparea[0],
+      '#size' => 5,
+      '#maxlength' => 5,
+      '#field_suffix' => ' x ',
+      '#theme_wrappers' => array(),
+    );
+    $element['croparea']['y'] = array(
+      '#type' => 'textfield',
+      '#default_value' => $croparea[1],
+      '#size' => 5,
+      '#maxlength' => 5,
+      '#field_suffix' => ' ' . t('pixels'),
+      '#theme_wrappers' => array(),
+    );
     /*    $element['preview_image_style'] = array(
           '#title' => t('Preview image style'),
           '#type' => 'select',
@@ -59,7 +143,10 @@ class ImageCropWidget extends ImageWidget {
     $field_settings = $this->getFieldSettings();
     // Add upload resolution validation.
     if ($field_settings['max_resolution'] || $field_settings['min_resolution']) {
-      $element['#upload_validators']['file_validate_image_resolution'] = array($field_settings['max_resolution'], $field_settings['min_resolution']);
+      $element['#upload_validators']['file_validate_image_resolution'] = array(
+        $field_settings['max_resolution'],
+        $field_settings['min_resolution']
+      );
     }
     // If not using custom extension validation, ensure this is an image.
     $supported_extensions = array('png', 'gif', 'jpg', 'jpeg');
@@ -77,7 +164,8 @@ class ImageCropWidget extends ImageWidget {
     // Default image.
     $default_image = $field_settings['default_image'];
     if (empty($default_image['fid'])) {
-      $default_image = $this->fieldDefinition->getFieldStorageDefinition()->getSetting('default_image');
+      $default_image = $this->fieldDefinition->getFieldStorageDefinition()
+        ->getSetting('default_image');
     }
     $element['#default_image'] = !empty($default_image['fid']) ? $default_image : array();
     return $element;
@@ -106,12 +194,14 @@ class ImageCropWidget extends ImageWidget {
       if (isset($element['#value']['width']) && isset($element['#value']['height'])) {
         $variables['width'] = $element['#value']['width'];
         $variables['height'] = $element['#value']['height'];
-      } else {
+      }
+      else {
         $image = \Drupal::service('image.factory')->get($file->getFileUri());
         if ($image->isValid()) {
           $variables['width'] = $image->getWidth();
           $variables['height'] = $image->getHeight();
-        } else {
+        }
+        else {
           $variables['width'] = $variables['height'] = NULL;
         }
       }
@@ -133,7 +223,8 @@ class ImageCropWidget extends ImageWidget {
         '#type' => 'hidden',
         '#value' => $variables['height'],
       );
-    } elseif (!empty($element['#default_image'])) {
+    }
+    elseif (!empty($element['#default_image'])) {
       $default_image = $element['#default_image'];
       $file = File::load($default_image['fid']);
       if (!empty($file)) {
@@ -156,8 +247,13 @@ class ImageCropWidget extends ImageWidget {
       // @see https://drupal.org/node/465106#alt-text
       '#maxlength' => 512,
       '#weight' => -12,
-      '#access' => (bool)$item['fids'] && $element['#alt_field'],
-      '#element_validate' => $element['#alt_field_required'] == 1 ? array(array(get_called_class(), 'validateRequiredFields')) : array(),
+      '#access' => (bool) $item['fids'] && $element['#alt_field'],
+      '#element_validate' => $element['#alt_field_required'] == 1 ? array(
+          array(
+            get_called_class(),
+            'validateRequiredFields'
+          )
+        ) : array(),
     );
     $element['title'] = array(
       '#type' => 'textfield',
@@ -166,8 +262,13 @@ class ImageCropWidget extends ImageWidget {
       '#description' => t('The title is used as a tool tip when the user hovers the mouse over the image.'),
       '#maxlength' => 1024,
       '#weight' => -11,
-      '#access' => (bool)$item['fids'] && $element['#title_field'],
-      '#element_validate' => $element['#title_field_required'] == 1 ? array(array(get_called_class(), 'validateRequiredFields')) : array(),
+      '#access' => (bool) $item['fids'] && $element['#title_field'],
+      '#element_validate' => $element['#title_field_required'] == 1 ? array(
+          array(
+            get_called_class(),
+            'validateRequiredFields'
+          )
+        ) : array(),
     );
     return parent::process($element, $form_state, $form);
   }
