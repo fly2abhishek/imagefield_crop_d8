@@ -10,9 +10,11 @@ namespace Drupal\imagefield_crop\Plugin\Field\FieldWidget;
 use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Component\Utility\NestedArray;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\field\Plugin\views\field\Field;
 use Drupal\file\Entity\File;
 use Drupal\file\Plugin\Field\FieldWidget\FileWidget;
 use Drupal\image\Plugin\Field\FieldWidget\ImageWidget;
+use Drupal\field\Entity\FieldConfig;
 
 /**
  * Plugin implementation of the 'image_image_crop' widget.
@@ -124,15 +126,7 @@ class ImageCropWidget extends ImageWidget {
       '#field_suffix' => ' ' . t('pixels'),
       '#theme_wrappers' => array(),
     );
-    /*    $element['preview_image_style'] = array(
-          '#title' => t('Preview image style'),
-          '#type' => 'select',
-          '#options' => image_style_options(FALSE),
-          '#empty_option' => '<' . t('no preview') . '>',
-          '#default_value' => $this->getSetting('preview_image_style'),
-          '#description' => t('The preview image will be shown while editing the content.'),
-          '#weight' => 15,
-        ); */
+
     return $element;
   }
 
@@ -141,34 +135,7 @@ class ImageCropWidget extends ImageWidget {
    */
   public function formElement(FieldItemListInterface $items, $delta, array $element, array &$form, FormStateInterface $form_state) {
     $element = parent::formElement($items, $delta, $element, $form, $form_state);
-    $field_settings = $this->getFieldSettings();
-    // Add upload resolution validation.
-    if ($field_settings['max_resolution'] || $field_settings['min_resolution']) {
-      $element['#upload_validators']['file_validate_image_resolution'] = array(
-        $field_settings['max_resolution'],
-        $field_settings['min_resolution']
-      );
-    }
-    // If not using custom extension validation, ensure this is an image.
-    $supported_extensions = array('png', 'gif', 'jpg', 'jpeg');
-    $extensions = isset($element['#upload_validators']['file_validate_extensions'][0]) ? $element['#upload_validators']['file_validate_extensions'][0] : implode(' ', $supported_extensions);
-    $extensions = array_intersect(explode(' ', $extensions), $supported_extensions);
-    $element['#upload_validators']['file_validate_extensions'][0] = implode(' ', $extensions);
-    // Add all extra functionality provided by the image widget.
-    $element['#process'][] = array(get_class($this), 'process');
-    // Add properties needed by process() method.
-    $element['#preview_image_style'] = $this->getSetting('preview_image_style');
-    $element['#title_field'] = $field_settings['title_field'];
-    $element['#title_field_required'] = $field_settings['title_field_required'];
-    $element['#alt_field'] = $field_settings['alt_field'];
-    $element['#alt_field_required'] = $field_settings['alt_field_required'];
-    // Default image.
-    $default_image = $field_settings['default_image'];
-    if (empty($default_image['fid'])) {
-      $default_image = $this->fieldDefinition->getFieldStorageDefinition()
-        ->getSetting('default_image');
-    }
-    $element['#default_image'] = !empty($default_image['fid']) ? $default_image : array();
+
     return $element;
   }
 
@@ -180,10 +147,22 @@ class ImageCropWidget extends ImageWidget {
    * This method is assigned as a #process callback in formElement() method.
    */
   public static function process($element, FormStateInterface $form_state, $form) {
+
+    print_r(FieldConfig::loadByName($element['#entity_type'], $element['#field_name'],  $element['#bundle'])); exit;
+ //   print_r( Field::fieldInfo()->getBundleInstance($element['#entity_type'], $element['#field_name'],  $element['#bundle'])); exit;
     $item = $element['#value'];
     $item['fids'] = $element['fids']['#value'];
-    $element['#theme'] = 'image_widget';
-    $element['#attached']['css'][] = drupal_get_path('module', 'image') . '/css/image.theme.css';
+
+    $element['#theme'] = 'imagefield_crop_widget';
+
+    $element['#description'] = t('Click on the image and drag to mark how the image will be cropped');
+
+    $path = drupal_get_path('module', 'imagefield_crop');
+    $element['#attached']['js'][] = "$path/Jcrop/js/jquery.Jcrop.js";
+    // We must define Drupal.behaviors for ahah to work, even if there is no file
+    $element['#attached']['js'][] = "$path/imagefield_crop.js";
+    $element['#attached']['css'][] = "$path/Jcrop/css/jquery.Jcrop.css";
+
     // Add the image preview.
     if (!empty($element['#files']) && $element['#preview_image_style']) {
       $file = reset($element['#files']);
@@ -191,6 +170,7 @@ class ImageCropWidget extends ImageWidget {
         'style_name' => $element['#preview_image_style'],
         'uri' => $file->getFileUri(),
       );
+
       // Determine image dimensions.
       if (isset($element['#value']['width']) && isset($element['#value']['height'])) {
         $variables['width'] = $element['#value']['width'];
@@ -206,71 +186,52 @@ class ImageCropWidget extends ImageWidget {
           $variables['width'] = $variables['height'] = NULL;
         }
       }
+
       $element['preview'] = array(
         '#weight' => -10,
-        '#theme' => 'image_style',
+        '#theme' => 'imagefield_crop_preview',
         '#width' => $variables['width'],
         '#height' => $variables['height'],
         '#style_name' => $variables['style_name'],
         '#uri' => $variables['uri'],
       );
-      // Store the dimensions in the form so the file doesn't have to be
-      // accessed again. This is important for remote files.
-      $element['width'] = array(
-        '#type' => 'hidden',
-        '#value' => $variables['width'],
+
+      $element['cropbox'] = array(
+        '#markup' => theme('image', array(
+          'path' => $variables->uri,
+          'attributes' => array(
+            'class' => 'cropbox',
+            'id' => $element['#id'] . '-cropbox'))),
       );
-      $element['height'] = array(
-        '#type' => 'hidden',
-        '#value' => $variables['height'],
+      $element['cropinfo'] = self::imagefield_add_cropinfo_fields($element['#file']->fid);
+      list($res_w, $res_h) = explode('x', $element['resolution']);
+      list($crop_w, $crop_h) = explode('x', $widget_settings['croparea']);
+      $settings = array(
+        $element['#id'] => array(
+          'box' => array(
+            'ratio' => $res_h ? $widget_settings['enforce_ratio'] * $res_w/$res_h : 0,
+            'box_width' => $crop_w,
+            'box_height' => $crop_h,
+          ),
+          'minimum' => array(
+            'width'   => $widget_settings['enforce_minimum'] ? $res_w : NULL,
+            'height'  => $widget_settings['enforce_minimum'] ? $res_h : NULL,
+          ),
+          //'preview' => $preview_js,
+        ),
       );
+      $element['#attached']['js'][] = array(
+        'data' => array('imagefield_crop' => $settings),
+        'type' => 'setting',
+        'scope' => 'header',
+      );
+
     }
-    elseif (!empty($element['#default_image'])) {
-      $default_image = $element['#default_image'];
-      $file = File::load($default_image['fid']);
-      if (!empty($file)) {
-        $element['preview'] = array(
-          '#weight' => -10,
-          '#theme' => 'image_style',
-          '#width' => $default_image['width'],
-          '#height' => $default_image['height'],
-          '#style_name' => $element['#preview_image_style'],
-          '#uri' => $file->getFileUri(),
-        );
-      }
-    }
-    // Add the additional alt and title fields.
-    $element['alt'] = array(
-      '#title' => t('Alternative text'),
-      '#type' => 'textfield',
-      '#default_value' => isset($item['alt']) ? $item['alt'] : '',
-      '#description' => t('This text will be used by screen readers, search engines, or when the image cannot be loaded.'),
-      // @see https://drupal.org/node/465106#alt-text
-      '#maxlength' => 512,
-      '#weight' => -12,
-      '#access' => (bool) $item['fids'] && $element['#alt_field'],
-      '#element_validate' => $element['#alt_field_required'] == 1 ? array(
-          array(
-            get_called_class(),
-            'validateRequiredFields'
-          )
-        ) : array(),
-    );
-    $element['title'] = array(
-      '#type' => 'textfield',
-      '#title' => t('Title'),
-      '#default_value' => isset($item['title']) ? $item['title'] : '',
-      '#description' => t('The title is used as a tool tip when the user hovers the mouse over the image.'),
-      '#maxlength' => 1024,
-      '#weight' => -11,
-      '#access' => (bool) $item['fids'] && $element['#title_field'],
-      '#element_validate' => $element['#title_field_required'] == 1 ? array(
-          array(
-            get_called_class(),
-            'validateRequiredFields'
-          )
-        ) : array(),
-    );
+
+    // prepend submit handler to remove button
+   // array_unshift($element['remove_button']['#submit'], 'imagefield_crop_widget_delete');
+
+   // return $element;
     return parent::process($element, $form_state, $form);
   }
 
@@ -300,4 +261,32 @@ class ImageCropWidget extends ImageWidget {
     }
   }
 
+  public static function imagefield_add_cropinfo_fields($fid = NULL) {
+    $defaults = array(
+      'x'       => 0,
+      'y'       => 0,
+      'width'   => 50,
+      'height'  => 50,
+      'changed' => 0,
+    );
+    if ($fid) {
+      $crop_info = variable_get('imagefield_crop_info', array());
+      if (isset($crop_info[$fid]) && !empty($crop_info[$fid])) {
+        $defaults = array_merge($defaults, $crop_info[$fid]);
+      }
+    }
+
+    foreach ($defaults as $name => $default) {
+      $element[$name] = array(
+        '#type' => 'hidden',
+        '#title' => $name,
+        '#attributes' => array('class' => array('edit-image-crop-' . $name)),
+        '#default_value' => $default,
+      );
+    }
+    return $element;
+  }
+
 }
+
+
