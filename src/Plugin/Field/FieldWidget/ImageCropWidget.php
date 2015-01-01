@@ -59,7 +59,8 @@ class ImageCropWidget extends ImageWidget {
       '#default_value' => $this->getSetting('collapsible'),
     );
     // Resolution settings.
-    $resolution = explode('x', $this->getSetting('resolution')) + array('', '');
+    $resolution = $this->getSetting('resolution')  ;
+
     $element['resolution'] = array(
       '#title' => t('The resolution to crop the image onto'),
       '#element_validate' => array(
@@ -71,7 +72,7 @@ class ImageCropWidget extends ImageWidget {
     );
     $element['resolution']['x'] = array(
       '#type' => 'textfield',
-      '#default_value' => $resolution[0],
+      '#default_value' => isset($resolution['x']) ? $resolution['x'] : '',
       '#size' => 5,
       '#maxlength' => 5,
       '#field_suffix' => ' x ',
@@ -79,7 +80,7 @@ class ImageCropWidget extends ImageWidget {
     );
     $element['resolution']['y'] = array(
       '#type' => 'textfield',
-      '#default_value' => $resolution[1],
+      '#default_value' => isset($resolution['y']) ? $resolution['y'] : '',
       '#size' => 5,
       '#maxlength' => 5,
       '#field_suffix' => ' ' . t('pixels'),
@@ -100,7 +101,7 @@ class ImageCropWidget extends ImageWidget {
       '#element_validate' => array('_imagefield_crop_widget_enforce_minimum_validate'),
     );
     // Crop area settings
-    $croparea = explode('x', $this->getSetting('croparea')) + array('', '');
+    $croparea = $this->getSetting('croparea') ;
     $element['croparea'] = array(
       '#title' => t('The resolution of the cropping area'),
       '#element_validate' => array('_imagefield_crop_widget_croparea_validate'),
@@ -109,7 +110,7 @@ class ImageCropWidget extends ImageWidget {
     );
     $element['croparea']['x'] = array(
       '#type' => 'textfield',
-      '#default_value' => $croparea[0],
+      '#default_value' => isset($croparea['x']) ? $croparea['x'] : '',
       '#size' => 5,
       '#maxlength' => 5,
       '#field_suffix' => ' x ',
@@ -117,7 +118,7 @@ class ImageCropWidget extends ImageWidget {
     );
     $element['croparea']['y'] = array(
       '#type' => 'textfield',
-      '#default_value' => $croparea[1],
+      '#default_value' => isset($croparea['y']) ? $croparea['y'] : '',
       '#size' => 5,
       '#maxlength' => 5,
       '#field_suffix' => ' ' . t('pixels'),
